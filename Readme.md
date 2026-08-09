@@ -22,11 +22,10 @@
 ## System health and deployment status are visible. Git history + dashboards + alerts provide observability.
 
 # GitOps vs Traditional CICD
-
-
+<img width="666" height="320" alt="Screenshot 2026-08-01 224413" src="https://github.com/user-attachments/assets/4e1f908e-da73-4f25-8177-09c705ea9b5f" />
 
 # ArgoCD Architecture
-
+<img width="728" height="401" alt="Screenshot 2026-08-01 224614" src="https://github.com/user-attachments/assets/e22e4ee0-e864-4df0-be0f-bd637ba63df6" />
 
 
 ## Api Server
@@ -39,11 +38,11 @@
 ## It will talk with Api Server and Repository Server and will deploy on our Kubernetes Cluster
 
 # ArgoCD vs FluxCD vs Jenkins X
+<img width="662" height="190" alt="Screenshot 2026-08-01 225349" src="https://github.com/user-attachments/assets/fe0f2311-f01c-4ac8-bda3-aa2738203189" />
 
 
 
 # Setup ArgoCD
-
 ## Docker → Required for Kind to run containers as cluster nodes.
 ```yaml
 sudo apt-get update
@@ -160,6 +159,8 @@ argocd login <instance_public_ip>:8080 --username admin --password <initial_pass
 
 # Deployment using UI
 ## First we will connect Github Repo(n ArgoCD UI, go to Settings → Repositories -> Connect Repo)
+<img width="750" height="498" alt="Screenshot 2026-08-06 221236" src="https://github.com/user-attachments/assets/e4d1e778-e236-47e7-b211-25d31438e896" />
+
 
 ## Adding cluster to ArgoCD Server 
 ## 1. Check your config contexts:
@@ -177,11 +178,14 @@ argocd cluster list
 ```
 
 ## Create Application in ArgoCD UI
-
+<img width="697" height="506" alt="Screenshot 2026-08-06 221323" src="https://github.com/user-attachments/assets/c7974a26-c0b0-413e-b1c3-d58a16fc8559" />
+<img width="740" height="509" alt="Screenshot 2026-08-06 221335" src="https://github.com/user-attachments/assets/39576b1d-dceb-4eeb-b975-37a148f608c5" />
 
 
 # Deployment using CLI
 ## Adding cluster to ArgoCD Server 
+<img width="787" height="281" alt="Screenshot 2026-08-06 221253" src="https://github.com/user-attachments/assets/c1276dad-971b-498c-9ee5-923006dd39de" />
+
 ## 1. Check your config contexts:
 ```yaml
 kubectl config get-contexts
@@ -196,8 +200,8 @@ argocd cluster add kind-argocd-cluster --name argocd-cluster --insecure
 argocd cluster list
 ```
 
-
 ## create application using cli
+
 ```yaml
 argocd app create apache-app \
   --repo https://github.com/<your-username>/argocd-demos.git \
