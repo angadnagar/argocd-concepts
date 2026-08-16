@@ -503,6 +503,489 @@ spec:
 # - After applying this ApplicationSet ArgoCD will create one Application per cluster it knows about.
 # - If you want to limit to specific clusters, use the clusters generator with labelSelectors, or use a List generator instead.
 ```
+# ArgoCD Notfications:
+## ArgoCD Notifications is a built-in component of ArgoCD since v1.7+.
+
+## It consists of:
+
+## Notification Controller: watches ArgoCD Applications and triggers notifications.
+## Triggers: define when to send (e.g., on sync failure).
+## Templates: define what to send (message content).
+## Subscriptions: define where to send (Slack, Email, etc.).
+## Common use cases: Send an email when an Application fails to sync, Post a Slack message when sync succeeds.
+
+## For Email, make sure to create App Password in Gmail account.(Open Google Account → Security → App passwords )
+
+## 1. Install Triggers and Templates from the catalog
+```yaml
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/notifications_catalog/install.yaml
+```
+## 2. Configure SMTP Secret
+```yaml
+# secret-smtp.yaml
+# This file defines a Kubernetes Secret for storing SMTP credentials used by ArgoCD Notifications.
+
+apiVersion: v1  # Specifies the API version for the Kubernetes object.
+kind: Secret    # Declares that this object is a Secret.
+metadata:
+  name: argocd-notifications-secret  # Name of the Secret resource.
+  namespace: argocd                 # Namespace where the Secret will be created.
+type: Opaque  # Generic secret type for arbitrary user-defined data.
+stringData:   # Allows you to provide secret data as unencoded strings (Kubernetes will encode them).
+  email-username: "your-email@example.com"   # SMTP sender email address (replace with your own).
+  email-password: "your-smtp-password"       # SMTP password or app password (replace with your own).
+
+# Note:
+# - This Secret is used by ArgoCD Notifications to authenticate with your SMTP server for sending emails.
+# - Replace the placeholder values with your actual SMTP credentials.
+# - Using stringData is convenient for writing secrets in plain text; Kubernetes will convert them to base64.
+```
+
+## kubectl apply -f secret-smtp.yaml
+
+## 3. Configure Notification ConfigMap
+## ArgoCD Notifications configuration lives in argocd-notifications-cm ConfigMap.
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # Context section: defines variables available in notification templates
+  context: |
+    argocdUrl: "http://<your-argocd-server>:8080"  # Replace with your ArgoCD server URL
+
+  # Email service configuration: SMTP settings for sending emails
+  service.email: |
+    username: $email-username         # Email username (set as secret)
+    password: $email-password         # Email password (set as secret)
+    host: smtp.gmail.com              # SMTP server host
+    port: 465                         # SMTP server port (SSL)
+    from: $email-username             # Sender email address
+
+  # Template for Degraded health: email content when app health is degraded
+  template.email-health-degraded: |
+    email:
+      subject: "[ArgoCD] {{.app.metadata.name}} health is {{.app.status.health.status}}"
+    message: |
+      🚨 Application: {{.app.metadata.name}}
+      📂 Namespace: {{.app.metadata.namespace}}
+      🔄 Sync status: {{.app.status.sync.status}}
+      📌 Revision: {{.app.status.sync.revision}}
+      ❤️ Health status: {{.app.status.health.status}}
+      📝 Health message: {{.app.status.health.message}}
+      ⚙️ Last operation: {{ if .app.operationState }}{{ .app.operationState.phase }}{{ else }}<none>{{ end }}
+      🔗 Details: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}
+
+  # Template for Deployed (synced + healthy): email content when app is successfully deployed
+  template.email-deployed: |
+    email:
+      subject: "[ArgoCD] {{.app.metadata.name}} successfully deployed 🎉"
+    message: |
+      ✅ Application: {{.app.metadata.name}}
+      📂 Namespace: {{.app.metadata.namespace}}
+      🔄 Sync status: {{.app.status.sync.status}}
+      📌 Revision: {{.app.status.sync.revision}}
+      ❤️ Health status: {{.app.status.health.status}}
+      ⚙️ Last operation: {{ if .app.operationState }}{{ .app.operationState.phase }}{{ else }}<none>{{ end }}
+      Finished at: {{ if .app.operationState }}{{ .app.operationState.finishedAt }}{{ end }}
+      🔗 Details: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}
+
+  # Trigger for Degraded health: sends email when app health is degraded
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [email-health-degraded]
+
+  # Trigger for Deployed: sends email when app is synced and healthy
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase == 'Succeeded' and app.status.health.status == 'Healthy'
+      send: [email-deployed]
+
+# This ConfigMap configures ArgoCD Notifications to send email alerts for application health changes.
+# It defines SMTP settings, notification templates, and triggers for sending emails on specific events.
+```
+## kubectl apply -f argocd-notifications-cm.yaml
+
+## 4. Update the Application with Notification Subscription
+```yaml
+# chai-app.yaml
+# This file defines an ArgoCD Application resource for deploying the chai-app.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chai-app # Name of the ArgoCD application
+  namespace: argocd # Namespace where ArgoCD is installed
+  annotations:
+    # The email notifier must be configured in argocd-notifications-cm.yaml, The `.email` is the name of the notifier, i.e, `service.email` in the argocd-notifications-cm.yaml.
+    # Subscribe to notifications when the app health is degraded.
+    notifications.argoproj.io/subscribe.on-health-degraded.email: "<receiver@example.com>"  # you can add multiple email ids separated by comma like "<receiver@example.com>, <receiver2@example.com>"
+    # Subscribe to notifications when the app is successfully deployed.
+    notifications.argoproj.io/subscribe.on-deployed.email: "<receiver@example.com>" # you can add multiple email ids separated by comma like "<receiver@example.com>, <receiver2@example.com>"
+spec:
+  project: default # ArgoCD project this app belongs to
+  source:
+    repoURL: https://github.com/<your-username>/argocd-demos.git # Git repository containing the app manifests
+    targetRevision: main # Git branch, tag, or commit to track
+    path: applicationsets/chai-app # Path within the repo where manifests are located
+  destination:
+    server: https://kubernetes.default.svc # Kubernetes API server address (in-cluster)
+    namespace: default # Namespace where the app will be deployed
+  syncPolicy:
+    automated:
+      prune: true # Automatically delete resources that are no longer defined in Git
+      selfHeal: true # Automatically correct drift between Git and cluster state
+
+# Brief Info:
+# This manifest enables GitOps for chai-app using ArgoCD.
+# Notifications are set up for health degradation and deployment events.
+# Automated sync ensures the cluster matches the desired state in Git.
+```
+## Now if application deployed then success mail will come and if application failed then app degraded mail will come.
+
+
+# Argo CD Image Updater
+## Argo CD Image Updater automates updating container images in ArgoCD-managed Applications. Instead of manually editing manifests every time a new image tag is pushed, Image Updater detects new versions and either updates your Git repository (recommended) or the ArgoCD Application directly.
+
+## Why use Argo CD Image Updater?
+## Saves manual effort: no more editing YAML for new image tags.
+## Keeps applications updated with the latest images (patches, fixes).
+## Maintains Git as the single source of truth (when using git write-back).
+## Works alongside ArgoCD for a full GitOps workflow.
+
+## Write-back mode
+## When Image Updater finds a new image, it has two ways to “write back” the update:
+
+## git write-back → creates a commit in your Git repo, updating the image tag in the manifests. ✅ Best practice for GitOps, because Git remains the source of truth.
+## argocd write-back → directly changes the ArgoCD Application resource in the cluster (imperative). Faster, but changes are not recorded in Git.
+## For our demo, we’ll use git write-back.
+
+## Semantic Versioning (semver)
+## semver stands for Semantic Versioning, a way of numbering versions like 1.0.0, 1.0.1, 1.1.0, 2.0.0.
+
+## Format: MAJOR.MINOR.PATCH
+
+## MAJOR → breaking changes (e.g., 1.x.x → 2.0.0)
+## MINOR → new features (e.g., 1.1.0 → 1.2.0)
+## PATCH → bug fixes (e.g., 1.1.1 → 1.1.2)
+## If you set strategy to semver, Image Updater only upgrades within semver rules (e.g., from 1.0.0 → 1.0.1 or 1.1.0, but not to 2.0.0).
+
+## The following update strategies are currently supported:
+
+## semver - Update to the latest version of an image considering semantic versioning constraints
+## latest/newest-build - Update to the most recently built image found in a registry
+## digest - Update to the latest version of a given version (tag), using the tag's SHA digest
+## name/alphabetical - Sorts tags alphabetically and update to the one with the highest cardinality
+## For safety, we’ll use semver.
+
+## Steps:
+## 1. Create GitHub Personal Access Token (PAT) with repo permissions (for git write-back)
+## 2. Install Argo CD Image Updater
+```yaml
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/config/install.yaml
+```
+## verify pod is running
+```yaml
+kubectl -n argocd get pods -l app.kubernetes.io/name=argocd-image-updater
+```
+
+## 3. Prepare your Docker Hub image
+## Log in to Docker Hub with your username and DockerHub PAT
+```yaml
+docker login
+```
+
+## Pull base image
+```yaml
+docker pull angadnagar/chai-devops:v1.0.0
+```
+
+## Tag the image with new version
+```yaml
+docker tag angadnagar/chai-devops:v1.0.0 angadnagar/chai-devops:v1.0.1
+```
+
+## Push to Docker hub
+```yaml
+docker push angadnagar/chai-devops:v1.0.1
+```
+
+## Update image in your deployment of chai-app
+
+
+## 4. Configure Git credentials (for git write-back), create a secret with GitHub username and PAT(secret.yml)
+```yaml
+apiVersion: v1 # Specifies the API version for Kubernetes resources
+kind: Secret # Declares that this resource is a Secret
+metadata:
+  name: argocd-image-updater-git-creds # Name of the Secret object
+  namespace: argocd # Namespace where the Secret will be created
+stringData:
+  username: "<github-username>" # Your GitHub username for authentication
+  password: "<personal-access-token>" # Your GitHub personal access token for authentication
+```
+
+## Create imageUpdater.yml
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+
+metadata:
+  name: chai-image-updater
+  namespace: argocd
+
+spec:
+  applicationRefs:
+    - namePattern: "chai-app"
+      useAnnotations: true
+```
+## This is the bridge between the new v1.x architecture and the annotation configuration. When useAnnotations: true is set, Image Updater reads the argocd-image-updater.argoproj.io/* annotations from your Application.
+
+## 5. Annotate your Application (chai-app)
+```yaml
+apiVersion: argoproj.io/v1alpha1 # Specifies the API version for the ArgoCD Application CRD
+kind: Application               # Declares this resource as an ArgoCD Application
+metadata:
+  name: chai-app                # Name of the ArgoCD Application
+  namespace: argocd             # Namespace where the Application resource will be created
+  annotations:
+    # Assign alias 'chai-app' to your image
+    argocd-image-updater.argoproj.io/image-list: chai-app=<your-dockerhub-username>/chai-devops # Maps the image alias 'chai-app' to your DockerHub image
+
+    # Use git write-back
+    argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/argocd-image-updater-git-creds # Configures image updater to write changes back to Git using provided secret
+
+    # Update strategy for chai-app image
+    argocd-image-updater.argoproj.io/chai-app.update-strategy: semver # Uses semantic versioning for image updates
+
+spec:
+  project: default              # Associates this Application with the 'default' ArgoCD project
+  source:
+    repoURL: https://github.com/<your-github-username>/argocd-demos.git # Git repository containing the app manifests
+    targetRevision: main        # Branch or tag to track in the repository
+    path: image_updater/chai-app # Path within the repo where the manifests(kustomization) are located
+  destination:
+    server: https://kubernetes.default.svc # Kubernetes API server address (in-cluster)
+    namespace: default           # Namespace in the cluster where app resources will be deployed
+  syncPolicy:
+    automated:                  # Enables automated sync for the application
+      prune: true               # Automatically deletes resources that are no longer defined in Git
+      selfHeal: true            # Automatically corrects drift between live and desired state
+
+# Brief: This ArgoCD Application manifest configures automated deployment and image updates for the 'chai-app' using ArgoCD Image Updater, with changes written back to Git.
+```
+
+
+## Now push any new image to docker hub
+```yaml
+docker tag <your-dockerhub-username>/chai-devops:v1.0.1 <your-dockerhub-username>/chai-devops:v1.0.2
+docker push <your-dockerhub-username>/chai-devops:v1.0.2
+```
+
+## check logs of image-updater
+```yaml
+kubectl -n argocd logs deploy/argocd-image-updater -f
+```
+
+## You should see logs like found newer image tag and creating git commit.
+
+## Check git repo, you should see commit from  v1.0.1 → v1.0.2
+
+## ArgoCD Detects the commit and syncs
+## You can check your application deployment in ArgoCD server, that image is updated in deployment
+
+
+
+# Monitoring ArgoCD(Prometheus + Grafana)
+## 1. Verify Metrics Endpoints
+```yaml
+kubectl get svc -n argocd
+```
+## You should see services like argocd-metrics, argocd-server-metrics, argocd-repo-server, ArgoCD exposes metrics by default, if you installed ArgoCD with Manifests method
+
+## 2. Install Prometheus and Grafana
+```yaml
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+kubectl create namespace monitoring
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring
+```
+## 3. Create ServiceMonitors
+## We need to tell Prometheus to scrape ArgoCD metrics endpoints. We do this by creating ServiceMonitor resources.
+```yaml
+# argocd-service-monitors.yaml
+# This file defines ServiceMonitor resources for monitoring ArgoCD components with Prometheus Operator.
+
+apiVersion: monitoring.coreos.com/v1 # API version for ServiceMonitor
+kind: ServiceMonitor                 # Resource type
+metadata:
+  name: argocd-metrics               # Name of the ServiceMonitor
+  namespace: argocd                  # Namespace where ServiceMonitor is deployed
+  labels:
+    release: kube-prometheus-stack   # Label to associate with Prometheus release
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics # Selects services with this label, must match with ArgoCD metrics service, check with: kubectl get svc -n argocd
+  endpoints:
+  - port: metrics                    # Monitors the 'metrics' port
+
+---
+apiVersion: monitoring.coreos.com/v1 # API version for ServiceMonitor
+kind: ServiceMonitor                 # Resource type
+metadata:
+  name: argocd-server-metrics        # Name of the ServiceMonitor
+  namespace: argocd                  # Namespace where ServiceMonitor is deployed
+  labels:
+    release: kube-prometheus-stack   # Label to associate with Prometheus release
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server-metrics # Selects services with this label, must match with ArgoCD server metrics service, check with: kubectl get svc -n argocd
+  endpoints:
+  - port: metrics                    # Monitors the 'metrics' port
+
+---
+apiVersion: monitoring.coreos.com/v1 # API version for ServiceMonitor
+kind: ServiceMonitor                 # Resource type
+metadata:
+  name: argocd-repo-server-metrics   # Name of the ServiceMonitor
+  namespace: argocd                  # Namespace where ServiceMonitor is deployed
+  labels:
+    release: kube-prometheus-stack   # Label to associate with Prometheus release
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server # Selects services with this label, must match with ArgoCD repo server metrics service, check with: kubectl get svc -n argocd
+  endpoints:
+  - port: metrics                    # Monitors the 'metrics' port
+```
+
+## 4. Deploy apps
+
+## 5. Access Prometheus and check on ui that metrics are coming or not, access Grafana & Import Dashboards
+
+
+
+## Grafana Pre-Added Datasource (You can see Prometheus is already added)
+
+## Now we can import Dashboards
+## example: ArgoCD Operational Overview (ID: 19993): Detailed operational metrics
+
+
+
+# Security & Scaling in ArgoCD
+## RBAC in ArgoCD (Role-Based Access Control)
+## RBAC Components
+## Role → Named set of permissions (e.g., role:readonly)
+## Policy → Maps roles to allowed/denied actions
+## Subject → User or group bound to a role
+
+## Group Assignment:
+```yaml
+g, <user/group>, <role>
+```
+## Policy Assignment:
+```yaml
+p, <role/user/group>, <resource>, <action>, <object>, <effect>
+```
+
+## Creating local users
+
+```yaml
+#argocd-user-cm.yml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm # standard label for ArgoCD config maps, used for selection by ArgoCD components
+    app.kubernetes.io/part-of: argocd # It is useful to identify all resources that are part of ArgoCD
+data:
+  # Add local users with capabilities
+  accounts.alice: apiKey, login  # Can generate tokens and login to UI
+  accounts.bob: login            # Can only login to UI
+  accounts.ci-user: apiKey       # Can only generate tokens (for automation)
+```
+
+## after applying this file, set password for this users
+```yaml
+argocd account update-password --account alice
+argocd account update-password --account bob
+```
+
+## If needed, you can disabled admin user, using:
+```yaml
+kubectl patch -n argocd configmap argocd-cm --patch='{"data":{"admin.enabled": "false"}}'
+```
+```yaml
+## Similarly, You can enable admin user, using
+kubectl patch -n argocd configmap argocd-cm --patch='{"data":{"admin.enabled": "false"}}'
+```
+
+## Example RBAC Policy
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  policy.csv: |
+    # Built-in roles
+    p, role:readonly, applications, get, */*, allow
+    p, role:readonly, applications, sync, */*, deny
+    p, role:admin, applications, *, */*, allow
+
+    # Custom roles
+    p, role:developer, applications, get, myproject/*, allow
+    p, role:developer, applications, sync, myproject/*, allow
+
+    # Bind users to roles
+    g, alice, role:readonly
+    g, bob, role:admin
+    g, my-org:dev-team, role:developer  # SSO group
+
+  # Default role for authenticated users
+  policy.default: role:readonly
+  
+  # Control which scopes to examine for RBAC
+  scopes: '[groups, email]'
+```
+
+
+## argocd-rbac-cm.yml
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  # RBAC policy definitions in CSV format
+  policy.csv: |
+    # Developers can get applications in 'myproject'
+    p, role:developer, applications, get, myproject/*, allow
+    # Developers can sync applications in 'myproject'
+    p, role:developer, applications, sync, myproject/*, allow 
+    # Admins can perform any action on any application
+    p, role:admin, applications, *, *, allow
+    # Assign 'developer' role to user 'alice'
+    g, alice, role:developer 
+    # Assign 'admin' role to user 'bob'
+    g, bob, role:admin 
+  # Default role for users not explicitly assigned
+  policy.default: role:readonly
+```
+
+## we can also validate rbac policy
+```yaml
+argocd admin settings rbac validate --policy-file argocd-rbac-cm.yaml
+```
+## Check user specific permissions
+```yaml
+argocd admin settings rbac can alice get applications "myproject/*" -n argocd
+```
 
 
 
