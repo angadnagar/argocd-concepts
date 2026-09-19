@@ -987,13 +987,304 @@ argocd admin settings rbac validate --policy-file argocd-rbac-cm.yaml
 argocd admin settings rbac can alice get applications "myproject/*" -n argocd
 ```
 
+# ArgoCD HTTPS Hosting on EKS
+## 1. AWS Cli must be installed(then aws configure -> with the user having permission for eks and all)
+## 2. eksctl should be installed (https://docs.aws.amazon.com/eks/latest/eksctl/installation.html)
+## 3. kubectl should be installed
+## 4. helm should be installed
+
+## Step by step setup for eks cluster
+## 1. Create eks cluster
+```yaml
+# Create EKS Cluster without node group
+eksctl create cluster --name argocd-cluster --region us-east-1 --without-nodegroup
+```
+## 2. verify cluster creation
+```yaml
+eksctl get clusters --region eu-west-1
+```
+## 3. Associate IAM OIDC Provider
+```yaml
+eksctl utils associate-iam-oidc-provider --region=eu-west-1 --cluster=argocd-cluster --approve
+```
+## 4. Create Node Group
+```yaml
+eksctl create nodegroup \
+--cluster=argocd-cluster \
+--region=us-east-1 \
+--name=argocd-ng \
+--node-type=t3.medium \
+--nodes=2 \
+--nodes-min=1 \
+--nodes-max=3 \
+--node-volume-size=20 \
+--managed
+```
+
+## 5. Verify Cluster Access
+## update kubeconfig
+```yaml
+aws eks update-kubeconfig --region eu-west-1 --name argocd-cluster
+```
+## verify nodes
+```yaml
+kubectl get nodes
+```
+
+## 6. Install ArgoCD
+## create namespace
+```yaml
+kubectl create namespace argocd
+```
+## Install ArgoCD
+```yaml
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+## Wait for pods to be ready
+```yaml
+kubectl wait --for=condition=ready pod --all -n argocd --timeout=300s
+```
+
+## 7. Install Nginx Controller
+## add helm repo
+```yaml
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+```
+
+## install ingress controller
+```yaml
+helm install my-ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.enableSSLPassthrough=true
+```
+
+## 8. Install cert-manager for SSL Certificates
+## install cert-manager
+```yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+```
+
+## Wait for cert-manager to be ready
+```yaml
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
+```
+
+## 9. Configure Let's Encrypt and HTTPS
+## Create letsencrypt-issuer.yaml with your email (replace <your-email@example.com> with your actual email).
+```yaml
+# letsencrypt-issuer.yml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: <your-email@example.com> # Replace with your email
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: <your-email@example.com>  # Replace with your email
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+```
+
+## then kubectl apply -f letsencrypt-issuer.yaml
+
+## Create argocd-ingress.yaml with your domain (replace argocd.yourdomain.com with your actual domain).(kubectl apply -f argocd-ingress.yaml)
+```yaml
+## argocd-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server-ingress
+  namespace: argocd
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true" # Enable SSL passthrough, meaning the ingress will forward HTTPS traffic directly to the backend service without terminating SSL.
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS" # Specify that the backend service uses HTTPS
+    cert-manager.io/cluster-issuer: letsencrypt-prod # Switch to production for trusted certificate
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: argocd.yourdomain.com  # Replace with your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argocd-server
+            port:
+              name: https
+  tls:
+  - hosts:
+    - argocd.yourdomain.com  # Replace with your domain
+    secretName: argocd-server-tls # Name of the TLS secret to be created by cert-manager
+```
+
+## Update DNS and Access ArgoCD in any Domain Provider
+## 1. Get the load balancer hostname
+```yaml
+# Get the load balancer hostname (External IP)
+kubectl get svc -n ingress-nginx
+```
+
+## 2. Point your domain argocd.yourdomain.com (replace with your actual domain) to this load balancer in DNS of your domain as a CNAME record
 
 
 
 
+## Verify SSL Certificate creation
+## 1. Check certificate request status
+```yaml
+kubectl get certificate -n argocd
+```
+
+## 2. Check certificate details
+```yaml
+kubectl describe certificate argocd-server-tls -n argocd
+```
+## 3. Check cert-manager logs if issues
+```yaml
+kubectl logs -n cert-manager deployment/cert-manager
+```
+
+## 4. Verify the secret was created
+```yaml
+kubectl get secret argocd-server-tls -n argocd
+```
+## The certificate should show Ready: True status. If not, check:
+
+## 1.DNS is pointing to the load balancer
+## 2.Domain is accessible from the internet
+## 3.cert-manager pods are running
+## 4.cert-manager logs for errors
+
+
+# SSO With Dex/OIDC
+## Github SSO with Dex
+## Step 1: Register OAuth App in GitHub
+## GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
+
+## Replace URL with the https url of argocd with our domain one
 
 
 
+## Now Generate new client secret
+
+## Step 2: Create GitHub Organisation, Create a GitHub Organization (if you don't have one) - Free one, create from: GitHub-Org-Create. Add your GitHub user (Add your github user) to that organization (https://github.com/organizations/plan)
 
 
+## Step 3: Configure ArgoCD
+## here we will create argocd-secret.yml where our github client id and secret will be stored
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-secret # Name of the secret
+  namespace: argocd   # Namespace where the secret will be created
+  labels:
+    app.kubernetes.io/name: argocd-secret   # Label for identifying the secret
+    app.kubernetes.io/part-of: argocd       # Label indicating this secret is part of ArgoCD
+type: Opaque # Indicates that the secret is of type Opaque (arbitrary user-defined data)
+stringData:
+  dex.github.clientId: <your-client-id>         # GitHub OAuth client ID for Dex
+  dex.github.clientSecret: <your-client-secret> # GitHub OAuth client secret for Dex
+```
 
+## argocd-cm configmap
+  ```yaml
+  apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm  # Label for identifying the ConfigMap
+    app.kubernetes.io/part-of: argocd  # Label indicating this ConfigMap is part of ArgoCD
+data:
+  # The ArgoCD server URL
+  url: https://<your-argocd-url>:8080
+  # Dex configuration for authentication
+  dex.config: |
+    connectors:
+    - type: github                # Use GitHub as the identity provider
+      id: github                  # Connector ID
+      name: GitHub                # Display name
+      config:
+        clientID: $dex.github.clientId         # GitHub OAuth app client ID (from secret)
+        clientSecret: $dex.github.clientSecret # GitHub OAuth app client secret (from secret)
+        orgs:
+        - name: <your-github-org> # GitHub organization allowed to authenticate
+```
+
+## argocd-rbac
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  scopes: '[groups, email]' # Specify the OIDC scopes to request from the identity provider
+
+  policy.csv: |
+    # Define admin/operator permissions for repo-admin role
+    p, role:repo-admin, applications, create, */*, allow
+    p, role:repo-admin, applications, get,    */*, allow  
+    p, role:repo-admin, applications, update, */*, allow   
+    p, role:repo-admin, applications, sync,   */*, allow   
+    p, role:repo-admin, applications, delete, */*, allow   
+    p, role:repo-admin, repositories, create, */*, allow   
+    p, role:repo-admin, repositories, *, */*, allow        
+    p, role:repo-admin, projects, *, *, allow              
+
+    # Bind by email (fallback)
+    g, <your-github-email>, role:repo-admin                
+
+    # Keep org binding for when it works
+    g, <your-github-org>:members, role:repo-admin         
+
+  policy.default: role:readonly # Set default role to readonly for all other users
+  ```
+
+## Create the secret with GitHub OAuth credentials
+```yaml
+kubectl apply -f argocd-github-secret.yaml
+```
+
+## Update argocd-cm with Dex configuration
+```yaml
+kubectl apply -f argocd-github-cm.yaml
+```
+
+## Apply RBAC:
+```yaml
+kubectl apply -f argocd-github-rbac.yaml
+```
+
+## Restart ArgoCD server to apply changes
+```yaml
+kubectl rollout restart -n argocd deployment argocd-server
+```
+
+
+# Full CI CD Project is available in "retail-store-sample-app" repo in which we used terraform for vpc,aws and argocd, helm and all creations and gitops CI part in which on any push to gitops branch, it will docker build and push image to ECR and then update helm values and based on this change argocd detects this and sync up new changes
