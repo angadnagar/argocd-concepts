@@ -250,6 +250,10 @@ kubectl apply -f online_shop_app.yml -n argocd
 # ArgoCD Core Features:
 ## 1. Projects:
 ## It is similar as we have namespace in Kubernetes, it is kind of group
+<img width="697" height="506" alt="Screenshot 2026-08-06 221323" src="https://github.com/user-attachments/assets/f618b55c-1421-47ea-bb5b-68b5fbc9037e" />
+<img width="740" height="509" alt="Screenshot 2026-08-06 221335" src="https://github.com/user-attachments/assets/07b4d2ab-c4d2-45f6-9fc9-fa2966129312" />
+
+
 ## project.yml
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -505,6 +509,9 @@ spec:
 ```
 # ArgoCD Notfications:
 ## ArgoCD Notifications is a built-in component of ArgoCD since v1.7+.
+
+<img width="869" height="428" alt="Screenshot 2026-08-12 194329" src="https://github.com/user-attachments/assets/e7fb7522-d2d2-47cf-8900-523f8a987dde" />
+
 
 ## It consists of:
 
@@ -797,6 +804,8 @@ kubectl -n argocd logs deploy/argocd-image-updater -f
 
 
 # Monitoring ArgoCD(Prometheus + Grafana)
+<img width="1053" height="393" alt="Screenshot 2026-08-15 151841" src="https://github.com/user-attachments/assets/850bb107-eede-4dcb-9d93-a47fdf0e8864" />
+
 ## 1. Verify Metrics Endpoints
 ```yaml
 kubectl get svc -n argocd
@@ -864,13 +873,16 @@ spec:
 
 ## 5. Access Prometheus and check on ui that metrics are coming or not, access Grafana & Import Dashboards
 
-
-
 ## Grafana Pre-Added Datasource (You can see Prometheus is already added)
+<img width="1465" height="810" alt="Screenshot 2026-08-15 185853" src="https://github.com/user-attachments/assets/9d9e6478-8183-405f-8a37-4b61fec951c7" />
+
+<img width="1438" height="704" alt="Screenshot 2026-08-15 185906" src="https://github.com/user-attachments/assets/b635a6c9-ed56-4495-b621-ffabb8f3504e" />
+
+<img width="1880" height="836" alt="Screenshot 2026-08-15 185947" src="https://github.com/user-attachments/assets/0752274f-8e59-4829-a044-e8de8f644622" />
+
 
 ## Now we can import Dashboards
 ## example: ArgoCD Operational Overview (ID: 19993): Detailed operational metrics
-
 
 
 # Security & Scaling in ArgoCD
@@ -879,6 +891,9 @@ spec:
 ## Role → Named set of permissions (e.g., role:readonly)
 ## Policy → Maps roles to allowed/denied actions
 ## Subject → User or group bound to a role
+
+<img width="1345" height="813" alt="Screenshot 2026-08-16 142420" src="https://github.com/user-attachments/assets/5389b973-59b4-4f36-a238-9e65e6c110d1" />
+
 
 ## Group Assignment:
 ```yaml
@@ -1149,6 +1164,8 @@ kubectl get svc -n ingress-nginx
 
 ## 2. Point your domain argocd.yourdomain.com (replace with your actual domain) to this load balancer in DNS of your domain as a CNAME record
 
+<img width="744" height="252" alt="Screenshot 2026-08-24 211417" src="https://github.com/user-attachments/assets/f6a4f431-fc37-4903-a54c-a56ba4debbcf" />
+
 
 
 
@@ -1185,6 +1202,8 @@ kubectl get secret argocd-server-tls -n argocd
 ## GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
 
 ## Replace URL with the https url of argocd with our domain one
+<img width="638" height="464" alt="Screenshot 2026-08-24 212349" src="https://github.com/user-attachments/assets/7f0b41c8-4f13-49af-968f-4594b3130d77" />
+
 
 
 
